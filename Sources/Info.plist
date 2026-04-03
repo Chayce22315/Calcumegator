@@ -27,6 +27,8 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Calcumegator uses the camera to photograph homework so on-device text recognition can fill your question for the local AI model.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

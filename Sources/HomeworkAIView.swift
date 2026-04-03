@@ -1,57 +1,56 @@
 import SwiftUI
+import UIKit
 
-// MARK: - Bundled model options (UI)
+// MARK: - Per-tier custom dropdown
 
-enum HomeworkModelOption: String, CaseIterable, Identifiable {
-    case llamaUltra = "Llama 3D · Ultra"
-    case proSoon = "Homework Lite · Pro (soon)"
-    case freeSoon = "Homework Mini · Free (soon)"
+private struct TierModelPickerRow: View {
+    let tier: ModelTierFolder
+    @Binding var selection: HomeworkTierModel
+    @Binding var expandedTier: ModelTierFolder?
+    let discovered: [HomeworkTierModel]
 
-    var id: String { rawValue }
-
-    var usesBundledLlama: Bool {
-        self == .llamaUltra
+    private var options: [HomeworkTierModel] {
+        HomeworkTierModel.options(for: tier, discovered: discovered)
     }
-}
 
-// MARK: - Custom styled dropdown (not system Menu / Picker)
-
-private struct CustomStyledModelPicker: View {
-    @Binding var selection: HomeworkModelOption
-    @Binding var isExpanded: Bool
+    private var isOpen: Bool { expandedTier == tier }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Pick model")
+            Text(tier.rawValue)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-                .tracking(0.6)
+                .tracking(0.5)
 
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    isExpanded.toggle()
+                    expandedTier = isOpen ? nil : tier
                 }
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "cpu")
+                    Image(systemName: tier == .ultra ? "cpu" : tier == .pro ? "bolt.fill" : "leaf.fill")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.cyan, .orange.opacity(0.95)],
+                                colors: [.cyan, .orange.opacity(0.9)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                    Text(selection.rawValue)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selection.title)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .rotationEffect(.degrees(isOpen ? 180 : 0))
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -64,45 +63,39 @@ private struct CustomStyledModelPicker: View {
                                 .strokeBorder(
                                     LinearGradient(
                                         colors: [
-                                            Color.orange.opacity(isExpanded ? 0.65 : 0.35),
-                                            Color.cyan.opacity(isExpanded ? 0.5 : 0.25)
+                                            Color.orange.opacity(isOpen ? 0.65 : 0.35),
+                                            Color.cyan.opacity(isOpen ? 0.5 : 0.25)
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
                                     ),
-                                    lineWidth: isExpanded ? 1.5 : 1
+                                    lineWidth: isOpen ? 1.5 : 1
                                 )
                         )
                 )
             }
             .buttonStyle(.plain)
 
-            if isExpanded {
+            if isOpen {
                 VStack(spacing: 0) {
-                    ForEach(Array(HomeworkModelOption.allCases.enumerated()), id: \.element.id) { index, option in
+                    ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
                         Button {
                             selection = option
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                                isExpanded = false
+                                expandedTier = nil
                             }
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(option.rawValue)
+                                    Text(option.title)
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(.primary)
-                                    if option == .llamaUltra {
-                                        Text("Core ML · Models/Ultra/llama_3d")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    } else {
-                                        Text("Placeholder — bundle a model later")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
+                                    Text(optionSubtitle(option))
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
                                 }
                                 Spacer()
-                                if option == selection {
+                                if option.id == selection.id {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.orange)
                                 }
@@ -113,7 +106,7 @@ private struct CustomStyledModelPicker: View {
                             .background(Color(white: index.isMultiple(of: 2) ? 0.12 : 0.14))
                         }
                         .buttonStyle(.plain)
-                        if index < HomeworkModelOption.allCases.count - 1 {
+                        if index < options.count - 1 {
                             Divider().overlay(Color.white.opacity(0.06))
                         }
                     }
@@ -127,50 +120,79 @@ private struct CustomStyledModelPicker: View {
             }
         }
     }
+
+    private var subtitle: String {
+        if selection.isPlaceholder {
+            return "Add .mlpackage to Models/\(tier.rawValue)"
+        }
+        if let path = selection.bundleFileURL?.lastPathComponent {
+            return "Core ML · \(path)"
+        }
+        return "Core ML · \(selection.resourceStem)"
+    }
+
+    private func optionSubtitle(_ option: HomeworkTierModel) -> String {
+        if option.isPlaceholder { return "No package found — add one to Xcode" }
+        return option.bundleFileURL?.path ?? option.resourceStem
+    }
 }
 
 // MARK: - Homework tab
 
 struct HomeworkAIView: View {
     @StateObject private var llama = LlamaInferenceManager()
+    @State private var discovered: [HomeworkTierModel] = []
+    @State private var freePick = HomeworkTierModel.placeholder(for: .free)
+    @State private var proPick = HomeworkTierModel.placeholder(for: .pro)
+    @State private var ultraPick = HomeworkTierModel.placeholder(for: .ultra)
+    @State private var solveTier: ModelTierFolder = .ultra
+    @State private var expandedTier: ModelTierFolder?
     @State private var prompt = ""
-    @State private var selectedModel: HomeworkModelOption = .llamaUltra
-    @State private var pickerExpanded = false
     @State private var placeholderOutput = ""
     @State private var isRunningPlaceholder = false
+    @State private var showCamera = false
+    @State private var cameraImage: UIImage?
+    @State private var ocrBusy = false
+
+    private var modelForRun: HomeworkTierModel {
+        switch solveTier {
+        case .free: return freePick
+        case .pro: return proPick
+        case .ultra: return ultraPick
+        }
+    }
+
+    private var cameraAvailable: Bool {
+        UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
 
     private var displayedResponse: String {
-        if selectedModel.usesBundledLlama {
-            return llama.outputText
+        if modelForRun.isPlaceholder {
+            return placeholderOutput
         }
-        return placeholderOutput
+        return llama.outputText
     }
 
     private var displayedError: String? {
-        if selectedModel.usesBundledLlama {
-            return llama.lastError
-        }
-        return nil
+        if modelForRun.isPlaceholder { return nil }
+        return llama.lastError
     }
 
     private var isBusy: Bool {
-        if selectedModel.usesBundledLlama {
-            return llama.isGenerating
-        }
-        return isRunningPlaceholder
+        ocrBusy || isRunningPlaceholder || (!modelForRun.isPlaceholder && llama.isGenerating)
     }
 
     var body: some View {
         ZStack {
             Color(white: 0.08).ignoresSafeArea()
 
-            if pickerExpanded {
+            if expandedTier != nil {
                 Color.black.opacity(0.5)
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .onTapGesture {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                            pickerExpanded = false
+                            expandedTier = nil
                         }
                     }
             }
@@ -185,41 +207,86 @@ struct HomeworkAIView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    CustomStyledModelPicker(selection: $selectedModel, isExpanded: $pickerExpanded)
-                        .zIndex(1)
+                    Text("Models per tier")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    VStack(spacing: 14) {
+                        TierModelPickerRow(tier: .free, selection: $freePick, expandedTier: $expandedTier, discovered: discovered)
+                        TierModelPickerRow(tier: .pro, selection: $proPick, expandedTier: $expandedTier, discovered: discovered)
+                        TierModelPickerRow(tier: .ultra, selection: $ultraPick, expandedTier: $expandedTier, discovered: discovered)
+                    }
+                    .zIndex(1)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Solve using")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                        Picker("Tier", selection: $solveTier) {
+                            ForEach(ModelTierFolder.allCases) { t in
+                                Text(t.rawValue).tag(t)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
 
                     Group {
-                        if selectedModel.usesBundledLlama {
-                            if let err = llama.loadError {
-                                Text(err)
-                                    .font(.footnote)
-                                    .foregroundStyle(.red.opacity(0.9))
-                            } else if llama.isLoaded {
-                                Label("Llama 3D ready (loaded asynchronously)", systemImage: "checkmark.seal.fill")
-                                    .font(.footnote.weight(.medium))
-                                    .foregroundStyle(.green.opacity(0.9))
-                            } else {
-                                Label("Loading model…", systemImage: "arrow.triangle.2.circlepath")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            (Text("Select ")
-                                + Text("Llama 3D · Ultra").bold()
-                                + Text(" to run your bundled Core ML package. Other rows are placeholders for future bundles."))
+                        if modelForRun.isPlaceholder {
+                            (Text("Pick a real package above or add Core ML files under Models/\(modelForRun.tier.rawValue). Folder name ")
+                                + Text("utlra").bold()
+                                + Text(" is treated as Ultra."))
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                        } else if let err = llama.loadError {
+                            Text(err)
+                                .font(.footnote)
+                                .foregroundStyle(.red.opacity(0.9))
+                        } else if llama.isLoaded {
+                            Label("Model ready (loaded off main thread)", systemImage: "checkmark.seal.fill")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(.green.opacity(0.9))
+                        } else {
+                            Label("Loading model…", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Your question")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        TextField("e.g. Solve 3x + 2 = 14 for x", text: $prompt, axis: .vertical)
+                        HStack {
+                            Text("Your question")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                showCamera = true
+                            } label: {
+                                Label("Camera", systemImage: "camera.fill")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .disabled(!cameraAvailable || ocrBusy)
+                            .opacity(cameraAvailable ? 1 : 0.45)
+                        }
+
+                        if ocrBusy {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Reading text from photo…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if !cameraAvailable {
+                            Text("Camera not available on this device (e.g. Simulator). Use a physical iPhone to scan homework.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        TextField("Type a problem or use Camera to scan", text: $prompt, axis: .vertical)
                             .textFieldStyle(.plain)
-                            .lineLimit(3...8)
+                            .lineLimit(3...10)
                             .padding(14)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -282,36 +349,75 @@ struct HomeworkAIView: View {
                 .padding()
             }
         }
-        .task(id: selectedModel.id) {
-            await handleModelChange()
+        .onAppear {
+            refreshDiscovery()
+        }
+        .task(id: modelForRun.id) {
+            await handleModelForRunChange()
+        }
+        .sheet(isPresented: $showCamera) {
+            CameraImagePicker(image: $cameraImage)
+                .ignoresSafeArea()
+        }
+        .onChange(of: cameraImage) { _, newImage in
+            guard let newImage else { return }
+            Task {
+                ocrBusy = true
+                let text = await HomeworkTextRecognition.recognizeText(in: newImage)
+                await MainActor.run {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        prompt = trimmed
+                    }
+                    ocrBusy = false
+                    cameraImage = nil
+                }
+            }
         }
     }
 
-    private func handleModelChange() async {
+    private func refreshDiscovery() {
+        discovered = HomeworkTierModel.discover(in: .main)
+        syncPicks()
+    }
+
+    private func syncPicks() {
+        freePick = stablePick(current: freePick, tier: .free)
+        proPick = stablePick(current: proPick, tier: .pro)
+        ultraPick = stablePick(current: ultraPick, tier: .ultra)
+    }
+
+    private func stablePick(current: HomeworkTierModel, tier: ModelTierFolder) -> HomeworkTierModel {
+        let opts = HomeworkTierModel.options(for: tier, discovered: discovered)
+        if opts.contains(where: { $0.id == current.id }) { return current }
+        return opts[0]
+    }
+
+    private func handleModelForRunChange() async {
         placeholderOutput = ""
-        if selectedModel.usesBundledLlama {
-            await llama.loadBundledLlamaIfNeeded()
-        } else {
+        if modelForRun.isPlaceholder {
             llama.unload()
+            return
         }
+        await llama.loadModelIfNeeded(modelForRun)
     }
 
     private func runInference() async {
         let q = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
 
-        if selectedModel.usesBundledLlama {
-            await llama.generate(from: q, maxNewTokens: 128)
+        if modelForRun.isPlaceholder {
+            isRunningPlaceholder = true
+            placeholderOutput = ""
+            let name = modelForRun.tier.rawValue
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            placeholderOutput =
+                "No Core ML model is bundled for Models/\(name) yet. Your question: “\(q)”\n\nAdd a .mlpackage under Models/\(name) in Xcode (folder utlra is treated as Ultra), then rebuild."
+            isRunningPlaceholder = false
             return
         }
 
-        isRunningPlaceholder = true
-        placeholderOutput = ""
-        let modelName = selectedModel.rawValue
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        placeholderOutput =
-            "(\(modelName)) The Swift birds are still riveting beams on this slot—no Core ML bundle is wired here yet. Your question was: “\(q)”\n\nAdd a `.mlpackage` under Models/Pro or Models/Free and hook it up the same way as Llama 3D."
-        isRunningPlaceholder = false
+        await llama.generate(from: q, maxNewTokens: 128)
     }
 }
 

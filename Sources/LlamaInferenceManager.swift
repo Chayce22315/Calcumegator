@@ -13,7 +13,7 @@ enum LlamaInferenceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "Could not find llama_3d in the app bundle (Models/Ultra)."
+            return "Could not find the Core ML model in the app bundle (check Models/Free, Pro, or Ultra)."
         case .modelNotLoaded:
             return "The Core ML model is not loaded yet."
         case .unsupportedSchema(let hint):
@@ -26,8 +26,7 @@ enum LlamaInferenceError: LocalizedError {
 
 // MARK: - Manager
 
-/// Loads `llama_3d` from the bundled `Models/Ultra` folder asynchronously and runs a small greedy text-generation loop.
-/// Real Llama exports vary (state, KV cache, tokenizer). This class tries string I/O first, then a token/logits loop with heuristic tokenization.
+/// Loads bundled Core ML models from `Models/{Free,Pro,Ultra}/` (folder name `utlra` is treated as Ultra) and runs a small greedy text-generation loop.
 @MainActor
 final class LlamaInferenceManager: ObservableObject {
     @Published private(set) var isLoaded = false
@@ -37,33 +36,38 @@ final class LlamaInferenceManager: ObservableObject {
     @Published private(set) var lastError: String?
 
     private var model: MLModel?
+    private var loadedChoiceId: String?
 
-    /// Looks for compiled `mlmodelc` or `mlpackage` after Xcode copies the `Models` folder into the bundle.
-    static func bundledLlamaURL() -> URL? {
-        let bundle = Bundle.main
-        let names = ["llama_3d"]
-        let extensions = ["mlmodelc", "mlpackage"]
-        let subdirs = [
-            "Models/Ultra",
-            "Ultra",
-            "Models",
-            ""
-        ]
-        for sub in subdirs {
-            for name in names {
-                for ext in extensions {
-                    if let url = bundle.url(forResource: name, withExtension: ext, subdirectory: sub.isEmpty ? nil : sub),
-                       FileManager.default.fileExists(atPath: url.path) {
-                        return url
-                    }
+    /// Resolves a `.mlpackage` / `.mlmodelc` using discovery URL, bundle paths, and a recursive bundle search.
+    nonisolated static func resolveModelURL(for choice: HomeworkTierModel, bundle: Bundle = .main) -> URL? {
+        if let u = choice.bundleFileURL, FileManager.default.fileExists(atPath: u.path) {
+            return u
+        }
+        guard !choice.resourceStem.isEmpty else { return nil }
+        let stem = choice.resourceStem
+        for ext in ["mlpackage", "mlmodelc"] {
+            for sub in choice.tier.modelsSearchSubpaths {
+                if let u = bundle.url(forResource: stem, withExtension: ext, subdirectory: sub),
+                   FileManager.default.fileExists(atPath: u.path) {
+                    return u
                 }
             }
+            if let u = bundle.url(forResource: stem, withExtension: ext, subdirectory: nil),
+               FileManager.default.fileExists(atPath: u.path) {
+                return u
+            }
         }
-        if let resourceURL = bundle.resourceURL {
-            let manual = resourceURL.appendingPathComponent("Models/Ultra/llama_3d.mlpackage")
-            if FileManager.default.fileExists(atPath: manual.path) { return manual }
-            let manualC = resourceURL.appendingPathComponent("Models/Ultra/llama_3d.mlmodelc")
-            if FileManager.default.fileExists(atPath: manualC.path) { return manualC }
+        if let root = bundle.resourceURL {
+            if let u = findFile(named: "\(stem).mlpackage", under: root) { return u }
+            if let u = findFile(named: "\(stem).mlmodelc", under: root) { return u }
+        }
+        return nil
+    }
+
+    nonisolated private static func findFile(named name: String, under root: URL) -> URL? {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return nil }
+        for case let url as URL in enumerator {
+            if url.lastPathComponent == name { return url }
         }
         return nil
     }
@@ -83,18 +87,35 @@ final class LlamaInferenceManager: ObservableObject {
         }
     }
 
-    func loadBundledLlamaIfNeeded() async {
-        guard model == nil else { return }
-        loadError = nil
+    func loadModelIfNeeded(_ choice: HomeworkTierModel) async {
         lastError = nil
-        guard let url = Self.bundledLlamaURL() else {
-            loadError = LlamaInferenceError.modelNotFound.localizedDescription
+        if loadedChoiceId == choice.id, model != nil, isLoaded {
+            loadError = nil
             return
         }
+
+        model = nil
+        isLoaded = false
+        loadedChoiceId = nil
+        loadError = nil
+
+        if choice.isPlaceholder {
+            loadError =
+                "No .mlpackage in Models/\(choice.tier.rawValue). Add one in Xcode under Models/\(choice.tier.rawValue) (folder name utlra is accepted as Ultra)."
+            return
+        }
+
+        guard let url = Self.resolveModelURL(for: choice) else {
+            loadError =
+                "Could not find ‘\(choice.resourceStem)’. Expected under Models/\(choice.tier.rawValue) (or utlra). After adding files, clean build so the bundle updates."
+            return
+        }
+
         do {
             let loaded = try await Self.loadModelAsync(at: url)
             model = loaded
             isLoaded = true
+            loadedChoiceId = choice.id
         } catch {
             loadError = error.localizedDescription
             isLoaded = false
@@ -104,6 +125,7 @@ final class LlamaInferenceManager: ObservableObject {
     func unload() {
         model = nil
         isLoaded = false
+        loadedChoiceId = nil
         loadError = nil
         outputText = ""
         lastError = nil
