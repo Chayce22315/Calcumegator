@@ -3,6 +3,8 @@ options:
   bundleIdPrefix: com.pixelatedstudios
   deploymentTarget:
     iOS: "17.0"
+  # CI uses Xcode 15.x; XcodeGen 2.44+ defaults to xcode16_0 (objectVersion 77) which 15.4 cannot open.
+  projectFormat: xcode15_3
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
 
