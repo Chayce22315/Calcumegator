@@ -1,0 +1,54 @@
+# Calcumegator — unsigned CI builds for internal artifacts only.
+# Produces Calcumegator.ipa (Payload/*.app zip). Not for App Store without signing.
+
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned (generic iOS device)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -scheme Calcumegator \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -derivedDataPath build/DerivedData \
+            build
+
+      - name: Package Calcumegator.ipa
+        run: |
+          set -euo pipefail
+          APP="build/DerivedData/Build/Products/Release-iphoneos/Calcumegator.app"
+          test -d "$APP"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -r Calcumegator.ipa Payload
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Calcumegator-ipa
+          path: Calcumegator.ipa
