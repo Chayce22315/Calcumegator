@@ -246,22 +246,22 @@ struct CalculatorView: View {
             key("C", style: .utility) { engine.clear() }
             key("±", style: .utility) { engine.toggleSign() }
             key("%", style: .utility) { engine.percent() }
-            key("÷", style: .operator) { engine.setOperation(.divide) }
+            key("÷", style: .arc) { engine.setOperation(.divide) }
 
             key("7", style: .digit) { engine.inputDigit(7) }
             key("8", style: .digit) { engine.inputDigit(8) }
             key("9", style: .digit) { engine.inputDigit(9) }
-            key("×", style: .operator) { engine.setOperation(.multiply) }
+            key("×", style: .arc) { engine.setOperation(.multiply) }
 
             key("4", style: .digit) { engine.inputDigit(4) }
             key("5", style: .digit) { engine.inputDigit(5) }
             key("6", style: .digit) { engine.inputDigit(6) }
-            key("−", style: .operator) { engine.setOperation(.subtract) }
+            key("−", style: .arc) { engine.setOperation(.subtract) }
 
             key("1", style: .digit) { engine.inputDigit(1) }
             key("2", style: .digit) { engine.inputDigit(2) }
             key("3", style: .digit) { engine.inputDigit(3) }
-            key("+", style: .operator) { engine.setOperation(.add) }
+            key("+", style: .arc) { engine.setOperation(.add) }
 
             zeroKey
             key(".", style: .digit) { engine.inputDecimal() }
@@ -270,7 +270,8 @@ struct CalculatorView: View {
     }
 
     private enum KeyStyle {
-        case digit, utility, operator
+        /// Arithmetic operators (+ − × ÷); not named `operator` (Swift keyword).
+        case digit, utility, arc
     }
 
     private func key(_ title: String, style: KeyStyle, action: @escaping () -> Void) -> some View {
@@ -338,7 +339,7 @@ struct CalculatorView: View {
         switch style {
         case .digit: return Color(white: 0.22)
         case .utility: return Color(white: 0.32)
-        case .operator: return Color(red: 1, green: 0.62, blue: 0.12)
+        case .arc: return Color(red: 1, green: 0.62, blue: 0.12)
         }
     }
 
@@ -346,7 +347,7 @@ struct CalculatorView: View {
         switch style {
         case .digit: return .white
         case .utility: return .black
-        case .operator: return .white
+        case .arc: return .white
         }
     }
 }

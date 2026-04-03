@@ -177,17 +177,18 @@ final class LlamaInferenceManager: ObservableObject {
         prompt: String,
         maxNewTokens: Int
     ) throws -> String {
-        let tokenCandidates = desc.inputDescriptionsByName.filter { pair in
-            guard pair.value.type == .multiArray else { return false }
-            let dt = pair.value.multiArrayConstraint?.dataType
-            return dt == .int32 || dt == .int64
+        // Avoid `Dictionary.filter { }` — on newer SDKs it can resolve to the `Predicate`-based overload (breaks CI).
+        var tokenCandidates: [(key: String, value: MLFeatureDescription)] = []
+        for (key, value) in desc.inputDescriptionsByName {
+            guard value.type == .multiArray else { continue }
+            guard value.multiArrayConstraint?.dataType == .int32 else { continue }
+            tokenCandidates.append((key, value))
         }
         guard let inputPair = tokenCandidates.max(by: { tokenInputScore($0.key) < tokenInputScore($1.key) }) else {
             throw LlamaInferenceError.unsupportedSchema(schemaHint(from: desc))
         }
         let inputName = inputPair.key
         let inputDesc = inputPair.value
-        let tokenDataType = inputDesc.multiArrayConstraint?.dataType ?? .int32
 
         let logitsName = desc.outputDescriptionsByName.first(where: { pair in
             let out = pair.value
@@ -224,13 +225,7 @@ final class LlamaInferenceManager: ObservableObject {
             }
 
             let shapeNums = [NSNumber(value: batch), NSNumber(value: seqDim)]
-            let tokenArray: MLMultiArray
-            switch tokenDataType {
-            case .int64:
-                tokenArray = try makeInt64MultiArray(shape: shapeNums, values: padded.map { Int64($0) })
-            default:
-                tokenArray = try makeInt32MultiArray(shape: shapeNums, values: padded)
-            }
+            let tokenArray = try makeInt32MultiArray(shape: shapeNums, values: padded)
 
             var featureDict: [String: MLFeatureValue] = [inputName: MLFeatureValue(multiArray: tokenArray)]
             for (name, value) in carry {
@@ -307,7 +302,8 @@ final class LlamaInferenceManager: ObservableObject {
         if let u = UnicodeScalar(UInt32(id)), u.isASCII {
             return String(Character(u))
         }
-        if id > 0, id < 256, let u = UnicodeScalar(UInt8(truncatingIfNeeded: id)) {
+        if id > 0, id < 256 {
+            let u = UnicodeScalar(UInt8(truncatingIfNeeded: id))
             return String(Character(u))
         }
         return ""
@@ -317,16 +313,6 @@ final class LlamaInferenceManager: ObservableObject {
         let arr = try MLMultiArray(shape: shape, dataType: .int32)
         let count = min(values.count, arr.count)
         let ptr = arr.dataPointer.bindMemory(to: Int32.self, capacity: arr.count)
-        for i in 0..<arr.count {
-            ptr[i] = i < count ? values[i] : 0
-        }
-        return arr
-    }
-
-    nonisolated private static func makeInt64MultiArray(shape: [NSNumber], values: [Int64]) throws -> MLMultiArray {
-        let arr = try MLMultiArray(shape: shape, dataType: .int64)
-        let count = min(values.count, arr.count)
-        let ptr = arr.dataPointer.bindMemory(to: Int64.self, capacity: arr.count)
         for i in 0..<arr.count {
             ptr[i] = i < count ? values[i] : 0
         }
@@ -350,7 +336,19 @@ final class LlamaInferenceManager: ObservableObject {
         guard indices.count == s.count else { return 0 }
         let idx = linearIndex(strides: s, indices: indices)
         guard idx >= 0, idx < array.count else { return 0 }
-        return array.object(atIndexedSubscript: idx).doubleValue
+        switch array.dataType {
+        case .double:
+            let p = array.dataPointer.bindMemory(to: Double.self, capacity: array.count)
+            return p[idx]
+        case .float32:
+            let p = array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
+            return Double(p[idx])
+        case .float16:
+            let p = array.dataPointer.bindMemory(to: Float16.self, capacity: array.count)
+            return Double(p[idx])
+        default:
+            return 0
+        }
     }
 
     nonisolated private static func argmaxTokenId(logits: MLMultiArray, sequencePosition pos: Int) -> Int32 {
@@ -411,9 +409,6 @@ final class LlamaInferenceManager: ObservableObject {
                 return MLFeatureValue(multiArray: arr)
             case .int32:
                 let arr = try MLMultiArray(shape: shape, dataType: .int32)
-                return MLFeatureValue(multiArray: arr)
-            case .int64:
-                let arr = try MLMultiArray(shape: shape, dataType: .int64)
                 return MLFeatureValue(multiArray: arr)
             default:
                 return nil
